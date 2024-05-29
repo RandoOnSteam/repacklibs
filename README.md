@@ -26,4 +26,4 @@ Single-file header-only libs written by other people that are public domain and 
 	``` 	
 	
 	I also tried to merge in SDL's modifications as well for their RWOPS interface...
-  	not sure how successful I was with that. According to SDL those modifications (all guarded by \[XXX\] #ifdefs) are public domain.
+  	not sure how successful I was with that. According to SDL those modifications (all guarded by \[XXX\]SDL\[XXX\] #ifdefs) are public domain.
