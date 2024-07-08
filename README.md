@@ -3,6 +3,8 @@ Single-file header-only libs written by other people that are public domain and 
 
 * [miniz.h](miniz.h) - The original public domain minizip modified for ancient compilers and libc removal
 
+* [stb_textedit.h](stb_textedit.h) - The text control guts with some small modifications to allow setting width type (STB_TEXTEDIT_WIDTHTYPE) as it is normally a float which isn't good on old CPUs without a FPU and a few more type safety fixes.
+
 * [stb_vorbis.h](stb_vorbis.h) - The ogg vorbis reader with the following modifications:
 
 	1. Modified to use more standardized data types
