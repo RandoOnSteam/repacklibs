@@ -13,7 +13,7 @@ Single-file header-only libs written by other people that are public domain and 
 	
 	4. Abstraction to character type used
 	
-Here's the new list of defines and functions you'll need to make before including the header
+Here's a list of defines and functions you'll need to make before including the header
 
 ```c
 #define STB_TEXTEDIT_KEYTYPE size_t
@@ -82,7 +82,7 @@ void layoutrow(struct StbTexteditRowStruct* row,
 #define STB_TEXTEDIT_K_WORDRIGHT ( KEY_RIGHT | STB_TEXTEDIT_K_CONTROL )
 ```
 
-and here's an version of getwidth() and layoutrow() that will handle
+and here's a version of getwidth() and layoutrow() that will handle
 all types of newlines:
 
 ```c
