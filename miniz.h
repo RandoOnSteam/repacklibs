@@ -3089,7 +3089,7 @@ static MZ_FORCEINLINE mz_bool mz_zip_array_push_back(mz_zip_archive *pZip, mz_zi
 
 #ifndef MINIZ_NO_TIME
 static mz_time mz_zip_dos_to_time_t(int dos_time, int dos_date) {
-#if defined(WIKISERVER_VERSION)
+#if defined(WIKICMS_VERSION)
   WSDATE tm;
   tm.year = ((dos_date >> 9) & 127) + 1980 - 1900;
   tm.month = ((dos_date >> 5) & 15) - 1;
@@ -3114,7 +3114,7 @@ static mz_time mz_zip_dos_to_time_t(int dos_time, int dos_date) {
 
 static void mz_zip_time_to_dos_time(mz_time time, mz_uint16 *pDOS_time,
 									  mz_uint16 *pDOS_date) {
-#if defined(WIKISERVER_VERSION)
+#if defined(WIKICMS_VERSION)
   WSDATE tm;
   WSTime_GetDate(time, &tm);
   *pDOS_time = (mz_uint16)(((tm.hour) << 11) + ((tm.minute) << 5) + ((tm.second) >> 1));
@@ -4167,13 +4167,13 @@ mz_bool mz_zip_writer_init_file(mz_zip_archive *pZip, const char *pFilename, mz_
 }
 #endif // #ifndef MINIZ_NO_STDIO
 
-mz_bool mz_zip_writer_init_from_reader(mz_zip_archive *pZip, const char *
-#ifndef MINIZ_NO_STDIO
-	pFilename
-#endif
-)
+mz_bool mz_zip_writer_init_from_reader(mz_zip_archive *pZip,
+	const char *pFilename)
 {
   mz_zip_internal_state *pState;
+#ifdef MINIZ_NO_STDIO
+	(void)(pFilename);
+#endif
   if ((!pZip) || (!pZip->m_pState) || (pZip->m_zip_mode != MZ_ZIP_MODE_READING))
 	return MZ_FALSE;
   // No sense in trying to write to an archive that's already at the support max size
@@ -5009,7 +5009,7 @@ void *mz_zip_extract_archive_file_to_heap(const char *pZip_filename, const char 
 	END miniz.c
 ------------------------------------------------------------------------------
 */
-
+#if defined(__cplusplus)
 class Zip
 {
 public:
@@ -5044,7 +5044,8 @@ public:
 				index, buffer, bufferSize, 0, 0, 0); }
 	// Valid flags: MZ_ZIP_FLAG_CASE_SENSITIVE, MZ_ZIP_FLAG_IGNORE_PATH
 	// Returns -1 if the file cannot be found.
-	int FindEntry(const char* entryName, const char* comment = NULL, mz_uint flags = 0)
+	int FindEntry(const char* entryName,
+		const char* comment = NULL, mz_uint flags = 0)
 	{ return mz_zip_reader_locate_file(&mMZip, entryName, comment, flags); }
 
 #ifndef MINIZ_NO_ARCHIVE_WRITING_APIS
@@ -5053,7 +5054,8 @@ public:
 	bool Create(mz_uint archiveSize = 0)
 	{ return mz_zip_writer_init(&mMZip, archiveSize); }
 	bool CreateHeap(mz_uint begSizeToReserve, mz_uint initialAllocSize)
-	{ return mz_zip_writer_init_heap(&mMZip, begSizeToReserve, initialAllocSize); }
+	{ return mz_zip_writer_init_heap(&mMZip, begSizeToReserve,
+		initialAllocSize); }
 #ifndef MINIZ_NO_STDIO
 	bool CreateFile(const char* path, mz_uint begSizeToReserve)
 	{ return mz_zip_writer_init_file(&mMZip, path, begSizeToReserve); }
@@ -5063,11 +5065,14 @@ public:
 				const void *pComment = NULL, mz_uint16 comment_size = 0,
 				mz_uint64 uncomp_size = 0, mz_uint32 uncomp_crc32 = 0)
 	{ return mz_zip_writer_add_mem_ex(&mMZip, pArchive_name, pBuf, buf_size,
-				pComment, comment_size, level_and_flags, uncomp_size, uncomp_crc32); }
+				pComment, comment_size, level_and_flags,
+		uncomp_size, uncomp_crc32); }
 #ifndef MINIZ_NO_STDIO
-	bool AddFile(const char * entryName, const char *pSrc_filename, const void *pComment,
-				mz_uint16 comment_size, mz_uint level_and_flags = MZ_DEFAULT_COMPRESSION)
-	{ return mz_zip_writer_add_file(&mMZip, entryName, pSrc_filename, pComment, comment_size, level_and_flags); }
+	bool AddFile(const char * entryName, const char *pSrc_filename,
+		const void *pComment, mz_uint16 comment_size,
+		mz_uint level_and_flags = MZ_DEFAULT_COMPRESSION)
+	{ return mz_zip_writer_add_file(&mMZip, entryName,
+		pSrc_filename, pComment, comment_size, level_and_flags); }
 #endif
 	bool AddFromOther(Zip& mz, mz_uint file_index)
 	{ return mz_zip_writer_add_from_zip_reader(&mMZip, &mz.mMZip, file_index); }
@@ -5080,6 +5085,97 @@ public:
 	mz_zip_archive mMZip;
 };
 
+extern "C" {
+#endif
+typedef struct ZIP
+{
+	mz_zip_archive mMZip;
+} ZIP;
+void Zip_Construct(ZIP* pThis)
+{ memset(&pThis->mMZip, 0, sizeof(pThis->mMZip)); }
+#define Zip_Destruct(pThis) /* no-op */
+#ifndef MINIZ_NO_STDIO
+	mz_bool Zip_Open(ZIP* pThis, const char* path)
+	{ return mz_zip_reader_init_file(&pThis->mMZip, path, 0); }
+#endif
+mz_bool Zip_OpenMemory(ZIP* pThis, void* buffer, mz_uint bufferSize)
+{ return mz_zip_reader_init_mem(&pThis->mMZip, buffer, bufferSize, 0); }
+void Zip_Close(ZIP* pThis)
+{
+#ifndef MINIZ_NO_ARCHIVE_WRITING_APIS
+	if(pThis->mMZip.m_zip_mode == MZ_ZIP_MODE_WRITING)
+		mz_zip_writer_end(&pThis->mMZip);
+	else
+#endif
+		mz_zip_reader_end(&pThis->mMZip);
+}
+mz_uint Zip_GetEntryName(ZIP* pThis, mz_uint index,
+	char* buffer, mz_uint bufferSize)
+{ return mz_zip_reader_get_filename(&pThis->mMZip, index,
+	buffer, bufferSize); }
+mz_uint Zip_GetNumFiles(ZIP* pThis)
+{ return mz_zip_reader_get_num_files(&pThis->mMZip); }
+mz_bool Zip_IsEntryDirectory(ZIP* pThis, mz_uint index)
+{ return mz_zip_reader_is_file_a_directory(&pThis->mMZip, (mz_uint)index); }
+mz_bool Zip_IsEntryEncrypted(ZIP* pThis, mz_uint index)
+{ return mz_zip_reader_is_file_encrypted(&pThis->mMZip, index); }
+mz_bool Zip_Stat(ZIP* pThis, mz_uint index, mz_zip_archive_file_stat* pStat)
+{ return mz_zip_reader_file_stat(&pThis->mMZip, index, pStat); }
+mz_bool Zip_Read(ZIP* pThis, mz_uint index, void* buffer, mz_uint bufferSize)
+{ return mz_zip_reader_extract_to_mem_no_alloc(&pThis->mMZip,
+			index, buffer, bufferSize, 0, 0, 0); }
+/* Valid flags: MZ_ZIP_FLAG_CASE_SENSITIVE, MZ_ZIP_FLAG_IGNORE_PATH
+ Returns -1 if the file cannot be found. */
+int Zip_FindEntry(ZIP* pThis, const char* entryName,
+	const char* comment /*= NULL*/, mz_uint flags /*= 0*/)
+{ return mz_zip_reader_locate_file(&pThis->mMZip, entryName, comment, flags); }
+
+#ifndef MINIZ_NO_ARCHIVE_WRITING_APIS
+	mz_bool Zip_ConvertAndCreate(ZIP* pThis, const char* path /*= NULL*/)
+	{ return mz_zip_writer_init_from_reader(&pThis->mMZip, path); }
+	mz_bool Zip_Create(ZIP* pThis, mz_uint archiveSize /*= 0*/)
+	{ return mz_zip_writer_init(&pThis->mMZip, archiveSize); }
+	mz_bool Zip_CreateHeap(ZIP* pThis, mz_uint begSizeToReserve,
+		mz_uint initialAllocSize)
+	{ return mz_zip_writer_init_heap(&pThis->mMZip,
+		begSizeToReserve, initialAllocSize); }
+#ifndef MINIZ_NO_STDIO
+	mz_bool Zip_CreateFile(ZIP* pThis, const char* path, mz_uint begSizeToReserve)
+	{ return mz_zip_writer_init_file(&pThis->mMZip, path, begSizeToReserve); }
+#endif
+	mz_bool Zip_AddMemWithParams(ZIP* pThis, const char *pArchive_name,
+		const void *pBuf, size_t buf_size,
+		mz_uint level_and_flags /*= MZ_DEFAULT_COMPRESSION */,
+		const void *pComment /*= NULL*/, mz_uint16 comment_size /* = 0 */,
+		mz_uint64 uncomp_size /*= 0*/, mz_uint32 uncomp_crc32 /* = 0 */)
+	{ return mz_zip_writer_add_mem_ex(&pThis->mMZip, pArchive_name, pBuf,
+				buf_size, pComment, comment_size, level_and_flags,
+				uncomp_size, uncomp_crc32); }
+
+	mz_bool Zip_AddMem(ZIP* pThis, const char *pArchive_name,
+		const void *pBuf, size_t buf_size)
+	{ return Zip_AddMemWithParams(pThis, pArchive_name, pBuf, buf_size,
+				MZ_DEFAULT_COMPRESSION, NULL, 0, 0, 0); }
+#ifndef MINIZ_NO_STDIO
+	mz_bool Zip_AddFile(ZIP* pThis, const char * entryName,
+		const char *pSrc_filename, const void *pComment,
+		mz_uint16 comment_size,
+		mz_uint level_and_flags /*= MZ_DEFAULT_COMPRESSION*/)
+	{ return mz_zip_writer_add_file(&pThis->mMZip, entryName, pSrc_filename,
+		pComment, comment_size, level_and_flags); }
+#endif
+	mz_bool Zip_AddFromOther(ZIP* pThis, ZIP* mz, mz_uint file_index)
+	{ return mz_zip_writer_add_from_zip_reader(&pThis->mMZip,
+		&mz->mMZip, file_index); }
+
+	mz_bool Zip_Finalize(ZIP* pThis)
+	{ return mz_zip_writer_finalize_archive(&pThis->mMZip); }
+	mz_bool Zip_FinalizeHeap(ZIP* pThis, void **pBuf, size_t *pSize)
+	{ return mz_zip_writer_finalize_heap_archive(&pThis->mMZip, pBuf, pSize); }
+#endif
+#if defined(__cplusplus)
+}
+#endif
 #if 0
 #include <iostream>
 

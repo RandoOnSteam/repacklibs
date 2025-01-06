@@ -670,7 +670,7 @@ typedef Uint16 uint16;
 typedef Sint16 int16;
 typedef Uint32 uint32;
 typedef Sint32 int32;
-#elif defined(WIKISERVER_VERSION)
+#elif defined(WIKICMS_VERSION)
 typedef uint8_t uint8;
 typedef int8_t int8;
 typedef uint16_t uint16;

@@ -292,7 +292,7 @@
 #define STB_TEXTEDIT_POSITIONTYPE    int
 #endif
 #ifndef STB_TEXTEDIT_WIDTHTYPE
-#define STB_TEXTEDIT_WIDTHTYPE    float
+#define STB_TEXTEDIT_POSITIONTYPE    float
 #endif
 
 typedef struct
@@ -448,7 +448,7 @@ static STB_TEXTEDIT_POSITIONTYPE stb_text_locate_coord(STB_TEXTEDIT_STRING *str,
    }
 
    // if the last character is a newline, return that. otherwise return 'after' the last character
-   if (STB_TEXTEDIT_GETCHAR(str, i+r.num_chars-1) == STB_TEXTEDIT_NEWLINE)
+   if (STB_TEXTEDIT_IS_NEWLINE(STB_TEXTEDIT_GETCHAR(str, i+r.num_chars-1)))
 	  return i+r.num_chars-1;
    else
 	  return i+r.num_chars;
@@ -493,6 +493,8 @@ static void stb_textedit_drag(STB_TEXTEDIT_STRING *str, STB_TexteditState *state
 
    p = stb_text_locate_coord(str, x, y);
    state->cursor = state->select_end = p;
+	/*printf("SelChanged: Cursor:%d, Start:%d, End:%d\n", state->cursor,
+	   state->select_start, state->select_end);*/
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -533,20 +535,31 @@ static void stb_textedit_find_charpos(StbFindState *find, STB_TEXTEDIT_STRING *s
 		 find->first_char = 0;
 		 find->length = z;
 		 find->height = r.ymax - r.ymin;
-		 find->x = r.x1;
 	  } else {
-		 find->y = 0;
-		 find->x = 0;
 		 find->height = 1;
+		 find->y = 0;
+		 find->first_char = 0;
+		 r.x1 = 0;
 		 while (i < z) {
 			STB_TEXTEDIT_LAYOUTROW(&r, str, i);
-			prev_start = i;
+			if(i + r.num_chars < z)
+				prev_start = i;
+			else
+			    find->first_char = i;
 			i += r.num_chars;
+			find->y += r.baseline_y_delta;
 		 }
-		 find->first_char = i;
+		 if(find->y 
+				&& !STB_TEXTEDIT_IS_NEWLINE(
+					STB_TEXTEDIT_GETCHAR(str, i - 1))
+				) /* readjust for last row */
+			 find->y -= r.baseline_y_delta;
+		 else
+			 r.x1 = 0; /* last line */
 		 find->length = 0;
 		 find->prev_first = prev_start;
 	  }
+	  find->x = r.x1;
 	  return;
    }
 
@@ -732,12 +745,10 @@ static void stb_textedit_key(STB_TEXTEDIT_STRING *str, STB_TexteditState *state,
 retry:
    switch (key) {
 	  default: {
-		 int c = STB_TEXTEDIT_KEYTOTEXT(key);
-		 if (c > 0) {
-			STB_TEXTEDIT_CHARTYPE ch = (STB_TEXTEDIT_CHARTYPE) c;
-
+		  STB_TEXTEDIT_CHARTYPE ch;
+		 if (STB_TEXTEDIT_KEYTOTEXT(key, str, &ch)) {
 			// can't add newline in single-line mode
-			if (c == '\n' && state->single_line)
+			if (STB_TEXTEDIT_IS_NEWLINE(ch) && state->single_line)
 			   break;
 
 			if (state->insert_mode && !STB_TEXT_HAS_SELECTION(state) && state->cursor < (STB_TEXTEDIT_POSITIONTYPE)STB_TEXTEDIT_STRINGLEN(str)) {
@@ -925,8 +936,8 @@ retry:
 	  case STB_TEXTEDIT_K_PGUP | STB_TEXTEDIT_K_SHIFT: {
 		 StbFindState find;
 		 StbTexteditRow row;
-		 STB_TEXTEDIT_POSITIONTYPE i;
-		 int j, prev_scan, sel = (key & STB_TEXTEDIT_K_SHIFT) != 0;
+		 STB_TEXTEDIT_POSITIONTYPE i, prev_scan;
+		 int j, sel = (key & STB_TEXTEDIT_K_SHIFT) != 0;
 		 int is_page = (key & ~STB_TEXTEDIT_K_SHIFT) == STB_TEXTEDIT_K_PGUP;
 		 int row_count = is_page ? state->row_count_per_page : 1;
 
@@ -978,7 +989,7 @@ retry:
 			// go to previous line
 			// (we need to scan previous line the hard way. maybe we could expose this as a new API function?)
 			prev_scan = find.prev_first > 0 ? find.prev_first - 1 : 0;
-			while (prev_scan > 0 && STB_TEXTEDIT_GETCHAR(str, prev_scan - 1) != STB_TEXTEDIT_NEWLINE)
+			while (prev_scan > 0 && !STB_TEXTEDIT_IS_NEWLINE(STB_TEXTEDIT_GETCHAR(str, prev_scan - 1)))
 			   --prev_scan;
 			find.first_char = find.prev_first;
 			find.prev_first = prev_scan;
@@ -1000,6 +1011,10 @@ retry:
 
 	  case STB_TEXTEDIT_K_BACKSPACE:
 	  case STB_TEXTEDIT_K_BACKSPACE | STB_TEXTEDIT_K_SHIFT:
+		 /* printf("DEL: CURSOR:%d SS:%d SE:%d LEN:%d\n", 
+			  (int)state->cursor,
+			  (int)state->select_start, (int)state->select_end,
+			  (int)STB_TEXTEDIT_STRINGLEN(str));*/ 
 		 if (STB_TEXT_HAS_SELECTION(state))
 			stb_textedit_delete_selection(str, state);
 		 else {
@@ -1009,6 +1024,10 @@ retry:
 			   --state->cursor;
 			}
 		 }
+		  /*printf("AFTERDEL: CURSOR:%d SS:%d SE:%d LEN:%d\n", 
+			  (int)state->cursor,
+			  (int)state->select_start, (int)state->select_end,
+			  (int)STB_TEXTEDIT_STRINGLEN(str)); */
 		 state->has_preferred_x = 0;
 		 break;
 
@@ -1056,7 +1075,7 @@ retry:
 		 stb_textedit_move_to_first(state);
 		 if (state->single_line)
 			state->cursor = 0;
-		 else while (state->cursor > 0 && STB_TEXTEDIT_GETCHAR(str, state->cursor-1) != STB_TEXTEDIT_NEWLINE)
+		 else while (state->cursor > 0 && !STB_TEXTEDIT_IS_NEWLINE(STB_TEXTEDIT_GETCHAR(str, state->cursor-1)))
 			--state->cursor;
 		 state->has_preferred_x = 0;
 		 break;
@@ -1070,7 +1089,7 @@ retry:
 		 stb_textedit_move_to_first(state);
 		 if (state->single_line)
 			 state->cursor = n;
-		 else while (state->cursor < n && STB_TEXTEDIT_GETCHAR(str, state->cursor) != STB_TEXTEDIT_NEWLINE)
+		 else while (state->cursor < n && !STB_TEXTEDIT_IS_NEWLINE(STB_TEXTEDIT_GETCHAR(str, state->cursor)))
 			 ++state->cursor;
 		 state->has_preferred_x = 0;
 		 break;
@@ -1084,7 +1103,7 @@ retry:
 		 stb_textedit_prep_selection_at_cursor(state);
 		 if (state->single_line)
 			state->cursor = 0;
-		 else while (state->cursor > 0 && STB_TEXTEDIT_GETCHAR(str, state->cursor-1) != STB_TEXTEDIT_NEWLINE)
+		 else while (state->cursor > 0 && !STB_TEXTEDIT_IS_NEWLINE(STB_TEXTEDIT_GETCHAR(str, state->cursor-1)))
 			--state->cursor;
 		 state->select_end = state->cursor;
 		 state->has_preferred_x = 0;
@@ -1099,7 +1118,7 @@ retry:
 		 stb_textedit_prep_selection_at_cursor(state);
 		 if (state->single_line)
 			 state->cursor = n;
-		 else while (state->cursor < n && STB_TEXTEDIT_GETCHAR(str, state->cursor) != STB_TEXTEDIT_NEWLINE)
+		 else while (state->cursor < n && !STB_TEXTEDIT_IS_NEWLINE(STB_TEXTEDIT_GETCHAR(str, state->cursor)))
 			++state->cursor;
 		 state->select_end = state->cursor;
 		 state->has_preferred_x = 0;
