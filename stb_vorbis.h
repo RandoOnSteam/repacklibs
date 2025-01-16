@@ -1074,7 +1074,7 @@ static void crc32_init(void)
    }
 }
 
-STB_FORCEINLINE uint32 crc32_update(uint32 crc, uint8 byte)
+STB_FORCEINLINE uint32 stb_vorbis_crc32_update(uint32 crc, uint8 byte)
 {
    return (crc << 8) ^ crc_table[byte ^ (crc >> 24)];
 }
@@ -1788,7 +1788,7 @@ static uint32 get_bits(vorb *f, int n)
 // expand the buffer to as many bits as possible without reading off end of packet
 // it might be nice to allow f->valid_bits and f->acc to be stored in registers,
 // e.g. cache them locally and decode locally
-STB_FORCEINLINE void prep_huffman(vorb *f)
+STB_FORCEINLINE void stb_vorbis_prep_huffman(vorb *f)
 {
    if (f->valid_bits <= 24) {
 	  if (f->valid_bits == 0) f->acc = 0;
@@ -1813,7 +1813,7 @@ enum
 static int codebook_decode_scalar_raw(vorb *f, Codebook *c)
 {
    int i;
-   prep_huffman(f);
+   stb_vorbis_prep_huffman(f);
 
    if (c->codewords == NULL && c->sorted_codewords == NULL)
 	  return -1;
@@ -1875,7 +1875,7 @@ static int codebook_decode_scalar_raw(vorb *f, Codebook *c)
 
 #define DECODE_RAW(var, f,c)                                  \
    if (f->valid_bits < STB_VORBIS_FAST_HUFFMAN_LENGTH)        \
-	  prep_huffman(f);                                        \
+	  stb_vorbis_prep_huffman(f);                                        \
    var = f->acc & FAST_HUFFMAN_TABLE_MASK;                    \
    var = c->fast_huffman[var];                                \
    if (var >= 0) {                                            \
@@ -1893,7 +1893,7 @@ static int codebook_decode_scalar(vorb *f, Codebook *c)
 {
    int i;
    if (f->valid_bits < STB_VORBIS_FAST_HUFFMAN_LENGTH)
-	  prep_huffman(f);
+	  stb_vorbis_prep_huffman(f);
    // fast huffman table lookup
    i = f->acc & FAST_HUFFMAN_TABLE_MASK;
    i = c->fast_huffman[i];
@@ -2192,7 +2192,8 @@ static float inverse_db_table[256] =
 int8 integer_divide_table[DIVTAB_NUMER][DIVTAB_DENOM]; // 2KB
 #endif
 
-STB_FORCEINLINE void draw_line(float *output, int x0, int y0, int x1, int y1, int n)
+STB_FORCEINLINE void stb_vorbis_draw_line(float *output,
+	int x0, int y0, int x1, int y1, int n)
 {
    int dy = y1 - y0;
    int adx = x1 - x0;
@@ -2712,7 +2713,7 @@ static void imdct_step3_inner_s_loop(int n, float *e, int i_off, int k_off, floa
    }
 }
 
-STB_FORCEINLINE void iter_54(float *z)
+STB_FORCEINLINE void stb_vorbis_iter_54(float *z)
 {
    float k00,k11,k22,k33;
    float y0,y1,y2,y3;
@@ -2781,8 +2782,8 @@ static void imdct_step3_inner_s_loop_ld654(int n, float *e, int i_off, float *A,
 	  z[-14] = (l11-l00) * A2;
 	  z[-15] = (l00+l11) * -A2;
 
-	  iter_54(z);
-	  iter_54(z-8);
+	  stb_vorbis_iter_54(z);
+	  stb_vorbis_iter_54(z-8);
 	  z -= 16;
    }
 }
@@ -3253,13 +3254,13 @@ static int do_floor(vorb *f, Mapping *map, int i, int n, float *target, YTYPE *f
 			int hy = finalY[j] * g->floor1_multiplier;
 			int hx = g->Xlist[j];
 			if (lx != hx)
-			   draw_line(target, lx,ly, hx,hy, n2);
+			   stb_vorbis_draw_line(target, lx,ly, hx,hy, n2);
 			CHECK(f);
 			lx = hx, ly = hy;
 		 }
 	  }
 	  if (lx < n2) {
-		 // optimization of: draw_line(target, lx,ly, n,ly, n2);
+		 // optimization of: stb_vorbis_draw_line(target, lx,ly, n,ly, n2);
 		 for (j=lx; j < n2; ++j)
 			LINE_OP(target[j], inverse_db_table[ly]);
 		 CHECK(f);
@@ -4610,10 +4611,10 @@ static int vorbis_search_for_page_pushdata(vorb *f, uint8 *data, int data_len)
 			   // scan everything up to the embedded crc (which we must 0)
 			   crc = 0;
 			   for (j=0; j < 22; ++j)
-				  crc = crc32_update(crc, data[i+j]);
+				  crc = stb_vorbis_crc32_update(crc, data[i+j]);
 			   // now process 4 0-bytes
 			   for (   ; j < 26; ++j)
-				  crc = crc32_update(crc, 0);
+				  crc = stb_vorbis_crc32_update(crc, 0);
 			   // len is the total number of bytes we need to scan
 			   n = f->page_crc_tests++;
 			   f->scan[n].bytes_left = len-j;
@@ -4643,7 +4644,7 @@ static int vorbis_search_for_page_pushdata(vorb *f, uint8 *data, int data_len)
 	  // m is the bytes to scan in the current chunk
 	  crc = f->scan[i].crc_so_far;
 	  for (j=0; j < m; ++j)
-		 crc = crc32_update(crc, data[n+j]);
+		 crc = stb_vorbis_crc32_update(crc, data[n+j]);
 	  f->scan[i].bytes_left -= m;
 	  f->scan[i].crc_so_far = crc;
 	  if (f->scan[i].bytes_left == 0) {
@@ -4827,16 +4828,16 @@ static uint32 vorbis_find_page(stb_vorbis *f, uint32 *end, uint32 *last)
 			   header[i] = 0;
 			crc = 0;
 			for (i=0; i < 27; ++i)
-			   crc = crc32_update(crc, header[i]);
+			   crc = stb_vorbis_crc32_update(crc, header[i]);
 			len = 0;
 			for (i=0; i < header[26]; ++i) {
 			   int s = get8(f);
-			   crc = crc32_update(crc, s);
+			   crc = stb_vorbis_crc32_update(crc, s);
 			   len += s;
 			}
 			if (len && f->eof) return 0;
 			for (i=0; i < len; ++i)
-			   crc = crc32_update(crc, get8(f));
+			   crc = stb_vorbis_crc32_update(crc, get8(f));
 			// finished parsing probable page
 			if (crc == goal) {
 			   // we could now check that it's either got the last
