@@ -1,5 +1,5 @@
 # repackaged libs
-Single-file header-only libs written by other people that are public domain and modified by RandoOnSteam <randoonsteam@gmail.com>. For libraries made by me visit www.github.com/RandoOnSteam/libs.
+Single-file header-only libs written by other people that are public domain and modified by RandoOnSteam <randoonsteam@gmail.com>.
 
 * [miniz.h](miniz.h) - The original public domain minizip modified for ancient compilers and libc removal. Also adds a light wrapper you can use ("Zip" for C++ and "ZIP" for C).
 
