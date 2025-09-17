@@ -9,8 +9,7 @@
 //
 // It is intended for use in games and other systems that need to build
 // their own custom widgets and which do not have heavy text-editing
-// requirements (this library is not recommended for use for editing large
-// texts, as its performance does not scale and it has limited undo).
+// requirements.
 //
 // Non-trivial behaviors are modelled after Windows text controls.
 //
@@ -79,9 +78,10 @@
 //   primitive type that defines a single character (e.g. char, wchar_t, etc).
 //
 //   To save space or increase undo-ability, you can optionally define the
-//   following things that are used by the undo system:
+//   following things that are used by the undo system if
+//   STB_TEXTEDIT_ALLOC_UNDO isn't defined. Otherwise, undo states are allocated
+//   on demand.
 //
-//      STB_TEXTEDIT_POSITIONTYPE         small int type encoding a valid cursor position
 //      STB_TEXTEDIT_UNDOSTATECOUNT       the number of undo states to allow
 //      STB_TEXTEDIT_UNDOCHARCOUNT        the number of characters to store in the undo buffer
 //
@@ -114,11 +114,14 @@
 //
 //     STB_TEXTEDIT_CHARTYPE             the character type
 //     STB_TEXTEDIT_POSITIONTYPE         small type that is a valid cursor position
-//     STB_TEXTEDIT_UNDOSTATECOUNT       the number of undo states to allow
-//     STB_TEXTEDIT_UNDOCHARCOUNT        the number of characters to store in the undo buffer
+//     STB_TEXTEDIT_WIDTHTYPE            type for pixel positioning (float default)
+//     STB_TEXTEDIT_UNDOSTATECOUNT       the number of undo states to allow (if STB_TEXTEDIT_ALLOC_UNDO isn't defined)
+//     STB_TEXTEDIT_UNDOCHARCOUNT        the number of characters to store in the undo buffer (if STB_TEXTEDIT_ALLOC_UNDO isn't defined)
 //
 // Symbols you must define for implementation mode:
 //
+//    STB_TEXTEDIT_MALLOC               malloc()-like memory allocation function
+//    STB_TEXTEDIT_FREE                 free()-like memory deallocation function
 //    STB_TEXTEDIT_STRING               the type of object representing a string being edited,
 //                                      typically this is a wrapper object with other data you need
 //
@@ -196,11 +199,16 @@
 //
 //    void stb_textedit_initialize_state(STB_TexteditState *state, int is_single_line)
 //
+//    void stb_textedit_free_state(STB_TexteditState *state)
 //    void stb_textedit_click(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_WIDTHTYPE x, STB_TEXTEDIT_WIDTHTYPE y)
 //    void stb_textedit_drag(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_WIDTHTYPE x, STB_TEXTEDIT_WIDTHTYPE y)
 //    int  stb_textedit_cut(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
 //    int  stb_textedit_paste(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_CHARTYPE *text, int len)
 //    void stb_textedit_key(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXEDIT_KEYTYPE key)
+//	  void stb_textedit_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+//    void stb_textedit_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+//    int stb_textedit_can_undo(STB_TexteditState *state)
+//    int stb_textedit_can_redo(STB_TexteditState *state)
 //
 //    Each of these functions potentially updates the string and updates the
 //    state.
@@ -292,16 +300,35 @@
 #define STB_TEXTEDIT_POSITIONTYPE    int
 #endif
 #ifndef STB_TEXTEDIT_WIDTHTYPE
-#define STB_TEXTEDIT_POSITIONTYPE    float
+#define STB_TEXTEDIT_WIDTHTYPE    float
 #endif
 
+#if defined(STB_TEXTEDIT_ALLOC_UNDO)
+typedef struct StbUndoRecord StbUndoRecord;
+struct StbUndoRecord
+{
+	// private data
+	STB_TEXTEDIT_POSITIONTYPE  where;
+	STB_TEXTEDIT_POSITIONTYPE  insert_length;
+	STB_TEXTEDIT_POSITIONTYPE  delete_length;
+	STB_TEXTEDIT_CHARTYPE* chars;
+	struct StbUndoRecord* prev;
+};
+
+typedef struct
+{
+	// private data
+	StbUndoRecord* undo_point;
+	StbUndoRecord* redo_point;
+} StbUndoState;
+#else
 typedef struct
 {
    // private data
    STB_TEXTEDIT_POSITIONTYPE  where;
    STB_TEXTEDIT_POSITIONTYPE  insert_length;
    STB_TEXTEDIT_POSITIONTYPE  delete_length;
-   STB_TEXTEDIT_POSITIONTYPE                        char_storage;
+   STB_TEXTEDIT_POSITIONTYPE  char_storage;
 } StbUndoRecord;
 
 typedef struct
@@ -309,9 +336,14 @@ typedef struct
    // private data
    StbUndoRecord          undo_rec [STB_TEXTEDIT_UNDOSTATECOUNT];
    STB_TEXTEDIT_CHARTYPE  undo_char[STB_TEXTEDIT_UNDOCHARCOUNT];
-   short undo_point, redo_point;
+   short undo_point, redo_point
+   #if defined(STB_TEXTEDIT_CIRCULAR_UNDO)
+       , undo_rec_start
+   #endif
+   ;
    STB_TEXTEDIT_POSITIONTYPE undo_char_point, redo_char_point;
 } StbUndoState;
+#endif
 
 typedef struct
 {
@@ -381,6 +413,13 @@ typedef struct StbTexteditRowStruct
 // implementation isn't include-guarded, since it might have indirectly
 // included just the "header" portion
 #ifdef STB_TEXTEDIT_IMPLEMENTATION
+
+#ifndef STB_TEXTEDIT_MALLOC
+#define STB_TEXTEDIT_MALLOC malloc
+#endif
+#ifndef STB_TEXTEDIT_FREE
+#define STB_TEXTEDIT_FREE free
+#endif
 
 #ifndef STB_TEXTEDIT_memmove
 #include <string.h>
@@ -503,8 +542,8 @@ static void stb_textedit_drag(STB_TEXTEDIT_STRING *str, STB_TexteditState *state
 //
 
 // forward declarations
-static void stb_text_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state);
-static void stb_text_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state);
+static void stb_textedit_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state);
+static void stb_textedit_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state);
 static void stb_text_makeundo_delete(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length);
 static void stb_text_makeundo_insert(STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length);
 static void stb_text_makeundo_replace(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE old_length, STB_TEXTEDIT_POSITIONTYPE new_length);
@@ -549,7 +588,7 @@ static void stb_textedit_find_charpos(StbFindState *find, STB_TEXTEDIT_STRING *s
 			i += r.num_chars;
 			find->y += r.baseline_y_delta;
 		 }
-		 if(find->y 
+		 if(find->y
 				&& !STB_TEXTEDIT_IS_NEWLINE(
 					STB_TEXTEDIT_GETCHAR(str, i - 1))
 				) /* readjust for last row */
@@ -777,12 +816,12 @@ retry:
 #endif
 
 	  case STB_TEXTEDIT_K_UNDO:
-		 stb_text_undo(str, state);
+		 stb_textedit_undo(str, state);
 		 state->has_preferred_x = 0;
 		 break;
 
 	  case STB_TEXTEDIT_K_REDO:
-		 stb_text_redo(str, state);
+		 stb_textedit_redo(str, state);
 		 state->has_preferred_x = 0;
 		 break;
 
@@ -1011,10 +1050,10 @@ retry:
 
 	  case STB_TEXTEDIT_K_BACKSPACE:
 	  case STB_TEXTEDIT_K_BACKSPACE | STB_TEXTEDIT_K_SHIFT:
-		 /* printf("DEL: CURSOR:%d SS:%d SE:%d LEN:%d\n", 
+		 /* printf("DEL: CURSOR:%d SS:%d SE:%d LEN:%d\n",
 			  (int)state->cursor,
 			  (int)state->select_start, (int)state->select_end,
-			  (int)STB_TEXTEDIT_STRINGLEN(str));*/ 
+			  (int)STB_TEXTEDIT_STRINGLEN(str));*/
 		 if (STB_TEXT_HAS_SELECTION(state))
 			stb_textedit_delete_selection(str, state);
 		 else {
@@ -1024,7 +1063,7 @@ retry:
 			   --state->cursor;
 			}
 		 }
-		  /*printf("AFTERDEL: CURSOR:%d SS:%d SE:%d LEN:%d\n", 
+		  /*printf("AFTERDEL: CURSOR:%d SS:%d SE:%d LEN:%d\n",
 			  (int)state->cursor,
 			  (int)state->select_start, (int)state->select_end,
 			  (int)STB_TEXTEDIT_STRINGLEN(str)); */
@@ -1127,9 +1166,571 @@ retry:
    }
 }
 
+#if defined(STB_TEXTEDIT_ALLOC_UNDO)
 /////////////////////////////////////////////////////////////////////////////
 //
-//      Undo processing
+//      Undo processing (alloc version)
+//
+
+static void stb_textedit_dec_undorec(StbUndoRecord **rec)
+{
+	StbUndoRecord *prev_rec = (*rec)->prev;
+	STB_TEXTEDIT_FREE((*rec)->chars);
+	STB_TEXTEDIT_FREE((*rec));
+	(*rec) = prev_rec;
+}
+static void stb_textedit_flush_undorec(StbUndoRecord **rec)
+{
+	while((*rec))
+		stb_textedit_dec_undorec(&(*rec));
+}
+static void stb_textedit_flush_redo(StbUndoState *state)
+{
+	stb_textedit_flush_undorec(&state->redo_point);
+}
+
+static StbUndoRecord *stb_text_create_undo_record(StbUndoState *state,
+	StbUndoRecord **rec,
+	STB_TEXTEDIT_POSITIONTYPE numchars)
+{
+	StbUndoRecord *newrec;
+   // any time we create a new undo record, we discard redo
+   stb_textedit_flush_redo(state);
+
+   newrec =
+		(StbUndoRecord*)STB_TEXTEDIT_MALLOC(sizeof(StbUndoRecord));
+   if(newrec == 0)
+	   return 0;
+   newrec->prev = (*rec);
+   (*rec) = newrec;
+   if(numchars)
+	   newrec->chars = (STB_TEXTEDIT_CHARTYPE*)
+		   STB_TEXTEDIT_MALLOC(sizeof(STB_TEXTEDIT_CHARTYPE) * numchars);
+   else
+	   newrec->chars = 0;
+   newrec->insert_length = numchars;
+   return newrec;
+}
+
+static STB_TEXTEDIT_CHARTYPE *stb_text_createundo(StbUndoState *state, STB_TEXTEDIT_POSITIONTYPE pos, STB_TEXTEDIT_POSITIONTYPE insert_len, STB_TEXTEDIT_POSITIONTYPE delete_len)
+{
+   StbUndoRecord *r = stb_text_create_undo_record(state, &state->undo_point, insert_len);
+   if (r == NULL)
+	  return NULL;
+
+   r->where = pos;
+   r->delete_length = (STB_TEXTEDIT_POSITIONTYPE) delete_len;
+
+   return r->chars;
+}
+
+static STB_TEXTEDIT_CHARTYPE *stb_text_createredo(StbUndoState *state, STB_TEXTEDIT_POSITIONTYPE pos, STB_TEXTEDIT_POSITIONTYPE insert_len, STB_TEXTEDIT_POSITIONTYPE delete_len)
+{
+   StbUndoRecord *r = stb_text_create_undo_record(state, &state->redo_point, insert_len);
+   if (r == NULL)
+	  return NULL;
+
+   r->where = pos;
+   r->delete_length = (STB_TEXTEDIT_POSITIONTYPE) delete_len;
+
+   return r->chars;
+}
+
+static void stb_textedit_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+{
+   StbUndoState *s = &state->undostate;
+   StbUndoRecord* u;
+   STB_TEXTEDIT_CHARTYPE *redochars;
+   if (s->undo_point == 0)
+	  return;
+
+   // we need to do two things: apply the undo record, and create a redo record
+   u = s->undo_point;
+   redochars = stb_text_createredo(s, u->where, u->delete_length, u->insert_length);
+
+   if (u->delete_length) {
+	  // if the undo record says to delete characters, then the redo record will
+	  // need to re-insert the characters that get deleted, so we need to store
+	  // them.
+
+		STB_TEXTEDIT_POSITIONTYPE i;
+
+		// now save the characters
+		for (i=0; i < u->delete_length; ++i)
+			redochars[i] = STB_TEXTEDIT_GETCHAR(str, u->where + i);
+
+	  // now we can carry out the deletion
+	  STB_TEXTEDIT_DELETECHARS(str, u->where, u->delete_length);
+   }
+
+   // check type of recorded action:
+   if (u->insert_length) {
+	  // easy case: was a deletion, so we need to insert n characters
+	  STB_TEXTEDIT_INSERTCHARS(str, u->where, u->chars, u->insert_length);
+   }
+
+   state->cursor = u->where + u->insert_length;
+
+   stb_textedit_dec_undorec(&s->undo_point);
+}
+
+static void stb_textedit_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+{
+   StbUndoState *s = &state->undostate;
+   StbUndoRecord* r;
+   STB_TEXTEDIT_CHARTYPE *undochars;
+   if (s->redo_point == 0)
+	  return;
+
+   // we need to do two things: apply the redo record, and create an undo record
+   r = s->redo_point;
+   undochars = stb_text_createredo(s, r->where, r->delete_length, r->insert_length);
+
+   if (r->delete_length) {
+	  // the redo record requires us to delete characters, so the undo record
+	  // needs to store the characters
+
+		 STB_TEXTEDIT_POSITIONTYPE i;
+
+		 // now save the characters
+		 for (i=0; i < r->delete_length; ++i)
+			undochars[i] = STB_TEXTEDIT_GETCHAR(str, r->where + i);
+
+	  STB_TEXTEDIT_DELETECHARS(str, r->where, r->delete_length);
+   }
+
+   if (r->insert_length) {
+	  // easy case: need to insert n characters
+	  STB_TEXTEDIT_INSERTCHARS(str, r->where, r->chars, r->insert_length);
+   }
+
+   state->cursor = r->where + r->insert_length;
+
+   stb_textedit_dec_undorec(&s->redo_point);
+}
+
+static int stb_textedit_can_undo(STB_TexteditState *state)
+{
+	return state->undostate.undo_point != NULL;
+}
+
+static int stb_textedit_can_redo(STB_TexteditState *state)
+{
+	return state->undostate.redo_point != NULL;
+}
+
+static void stb_text_makeundo_insert(STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length)
+{
+   stb_text_createundo(&state->undostate, where, 0, length);
+}
+
+static void stb_text_makeundo_delete(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length)
+{
+   STB_TEXTEDIT_POSITIONTYPE i;
+   STB_TEXTEDIT_CHARTYPE *p = stb_text_createundo(&state->undostate, where, length, 0);
+   if (p) {
+	  for (i=0; i < length; ++i)
+		 p[i] = STB_TEXTEDIT_GETCHAR(str, where+i);
+   }
+}
+
+static void stb_text_makeundo_replace(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE old_length, STB_TEXTEDIT_POSITIONTYPE new_length)
+{
+   STB_TEXTEDIT_POSITIONTYPE i;
+   STB_TEXTEDIT_CHARTYPE *p = stb_text_createundo(&state->undostate, where, old_length, new_length);
+   if (p) {
+	  for (i=0; i < old_length; ++i)
+		 p[i] = STB_TEXTEDIT_GETCHAR(str, where+i);
+   }
+}
+
+static void stb_textedit_clear_undo_state(STB_TexteditState* state)
+{
+   state->undostate.undo_point = 0;
+   state->undostate.redo_point = 0;
+}
+
+#elif defined(STB_TEXTEDIT_CIRCULAR_UNDO)
+/////////////////////////////////////////////////////////////////////////////
+//
+//      Undo processing (circular non-alloc version)
+//
+
+/* Flush redo stack when creating a new undo record */
+static void stb_textedit_flush_redo(StbUndoState *state)
+{
+	short undo_point;
+	STB_TEXTEDIT_POSITIONTYPE undo_char_point;
+
+	undo_point = state->undo_point;
+	undo_char_point = state->undo_char_point;
+	state->redo_point = undo_point;
+	state->redo_char_point = undo_char_point;
+}
+
+/* Discard the oldest undo record */
+static void stb_textedit_discard_undo(StbUndoState *state)
+{
+	STB_TEXTEDIT_POSITIONTYPE n;
+	int i;
+	int idx;
+
+	if (state->undo_point > 0)
+	{
+		/* If the oldest undo record has characters, adjust char_storage */
+		if (state->undo_rec[state->undo_rec_start].char_storage >= 0)
+		{
+			n = state->undo_rec[state->undo_rec_start].insert_length;
+			for (i = 0; i < state->undo_point; i++)
+			{
+				idx = (state->undo_rec_start + i) % STB_TEXTEDIT_UNDOSTATECOUNT;
+				if (state->undo_rec[idx].char_storage >= 0)
+				{
+					state->undo_rec[idx].char_storage -= n;
+					if (state->undo_rec[idx].char_storage < 0)
+						state->undo_rec[idx].char_storage += STB_TEXTEDIT_UNDOCHARCOUNT;
+				}
+			}
+			state->undo_char_point -= n;
+			if (state->undo_char_point < 0)
+				state->undo_char_point += STB_TEXTEDIT_UNDOCHARCOUNT;
+		}
+		/* Move the start of the circular buffer */
+		state->undo_rec_start = (state->undo_rec_start + 1) % STB_TEXTEDIT_UNDOSTATECOUNT;
+		state->undo_point--;
+	}
+}
+
+/* Discard the oldest redo record */
+static void stb_textedit_discard_redo(StbUndoState *state)
+{
+	STB_TEXTEDIT_POSITIONTYPE n;
+	int i;
+	int idx;
+
+	if (state->redo_point < STB_TEXTEDIT_UNDOSTATECOUNT)
+	{
+		idx = (state->undo_rec_start + state->redo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+		/* If the redo record has characters, adjust char_storage */
+		if (state->undo_rec[idx].char_storage >= 0)
+		{
+			n = state->undo_rec[idx].insert_length;
+			for (i = state->redo_point; i < state->undo_point + state->redo_point; i++)
+			{
+				idx = (state->undo_rec_start + i) % STB_TEXTEDIT_UNDOSTATECOUNT;
+				if (state->undo_rec[idx].char_storage >= 0)
+				{
+					state->undo_rec[idx].char_storage += n;
+					if (state->undo_rec[idx].char_storage >= STB_TEXTEDIT_UNDOCHARCOUNT)
+						state->undo_rec[idx].char_storage -= STB_TEXTEDIT_UNDOCHARCOUNT;
+				}
+			}
+			state->redo_char_point += n;
+			if (state->redo_char_point >= STB_TEXTEDIT_UNDOCHARCOUNT)
+				state->redo_char_point -= STB_TEXTEDIT_UNDOCHARCOUNT;
+		}
+		state->redo_point++;
+	}
+}
+
+/* Create a new undo record in the circular buffer */
+static StbUndoRecord *stb_text_create_undo_record(StbUndoState *state, STB_TEXTEDIT_POSITIONTYPE numchars)
+{
+	int idx;
+
+	/* Validate input */
+	if (numchars < 0 || numchars > STB_TEXTEDIT_UNDOCHARCOUNT)
+		return NULL;
+
+	/* Clear redo stack */
+	stb_textedit_flush_redo(state);
+
+	/* If undo buffer is full, discard oldest record */
+	if (state->undo_point == STB_TEXTEDIT_UNDOSTATECOUNT)
+		stb_textedit_discard_undo(state);
+
+	/* Make space in character buffer by discarding undo records */
+	while (state->undo_char_point < state->redo_char_point)
+	{
+		if (state->undo_char_point + numchars > state->redo_char_point)
+			stb_textedit_discard_undo(state);
+	}
+	while (state->undo_char_point >= state->redo_char_point)
+	{
+		if (state->undo_char_point + numchars > STB_TEXTEDIT_UNDOCHARCOUNT &&
+			(state->undo_char_point + numchars) % STB_TEXTEDIT_UNDOCHARCOUNT > state->redo_char_point)
+			stb_textedit_discard_undo(state);
+		else
+			break;
+	}
+
+	/* Allocate new record at the end of the undo buffer */
+	idx = (state->undo_rec_start + state->undo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+	state->undo_point++;
+	return &state->undo_rec[idx];
+}
+
+/* Create undo record and allocate character storage */
+static STB_TEXTEDIT_CHARTYPE *stb_text_createundo(StbUndoState *state, STB_TEXTEDIT_POSITIONTYPE pos, STB_TEXTEDIT_POSITIONTYPE insert_len, STB_TEXTEDIT_POSITIONTYPE delete_len)
+{
+	StbUndoRecord *r;
+
+	r = stb_text_create_undo_record(state, insert_len);
+	if (r == NULL)
+		return NULL;
+
+	r->where = pos;
+	r->insert_length = insert_len;
+	r->delete_length = delete_len;
+
+	if (insert_len == 0)
+	{
+		r->char_storage = -1;
+		return NULL;
+	}
+	else
+	{
+		r->char_storage = state->undo_char_point;
+		state->undo_char_point += insert_len;
+		if (state->undo_char_point >= STB_TEXTEDIT_UNDOCHARCOUNT)
+			state->undo_char_point -= STB_TEXTEDIT_UNDOCHARCOUNT;
+		return &state->undo_char[r->char_storage];
+	}
+}
+
+/* Perform an undo operation */
+static void stb_textedit_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+{
+	StbUndoState *s;
+	StbUndoRecord u;
+	StbUndoRecord *r;
+	int undo_idx;
+	int redo_idx;
+	STB_TEXTEDIT_POSITIONTYPE i;
+	int can_store;
+
+	s = &state->undostate;
+	if (s->undo_point == 0)
+		return;
+
+	/* Get the undo record */
+	s->undo_point--;
+	undo_idx = (s->undo_rec_start + s->undo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+	u = s->undo_rec[undo_idx];
+	redo_idx = (s->undo_rec_start + s->redo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+	r = &s->undo_rec[redo_idx];
+
+	/* Create redo record */
+	r->char_storage = -1;
+	r->insert_length = u.delete_length;
+	r->delete_length = u.insert_length;
+	r->where = u.where;
+
+	if (u.delete_length)
+	{
+		/* Check if there's enough space for redo characters */
+		can_store = 1;
+		if (s->undo_char_point < s->redo_char_point)
+		{
+			if (s->undo_char_point + u.delete_length > s->redo_char_point)
+				can_store = 0;
+		}
+		else
+		{
+			if (s->undo_char_point + u.delete_length > STB_TEXTEDIT_UNDOCHARCOUNT &&
+				(s->undo_char_point + u.delete_length) % STB_TEXTEDIT_UNDOCHARCOUNT > s->redo_char_point)
+				can_store = 0;
+		}
+
+		if (can_store)
+		{
+			/* Make space by discarding redo records */
+			while (s->undo_char_point < s->redo_char_point)
+			{
+				if (s->undo_char_point + u.delete_length > s->redo_char_point)
+				{
+					if (s->redo_point == STB_TEXTEDIT_UNDOSTATECOUNT)
+					{
+						r->insert_length = 0;
+						break;
+					}
+					stb_textedit_discard_redo(s);
+					redo_idx = (s->undo_rec_start + s->redo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+					r = &s->undo_rec[redo_idx];
+				}
+				else
+					break;
+			}
+			while (s->undo_char_point >= s->redo_char_point)
+			{
+				if (s->undo_char_point + u.delete_length > STB_TEXTEDIT_UNDOCHARCOUNT &&
+					(s->undo_char_point + u.delete_length) % STB_TEXTEDIT_UNDOCHARCOUNT > s->redo_char_point)
+				{
+					if (s->redo_point == STB_TEXTEDIT_UNDOSTATECOUNT)
+					{
+						r->insert_length = 0;
+						break;
+					}
+					stb_textedit_discard_redo(s);
+					redo_idx = (s->undo_rec_start + s->redo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+					r = &s->undo_rec[redo_idx];
+				}
+				else
+					break;
+			}
+		}
+
+		if (r->insert_length)
+		{
+			/* Store characters for redo */
+			r->char_storage = s->redo_char_point - u.delete_length;
+			if (r->char_storage < 0)
+				r->char_storage += STB_TEXTEDIT_UNDOCHARCOUNT;
+			for (i = 0; i < u.delete_length; i++)
+				s->undo_char[(r->char_storage + i) % STB_TEXTEDIT_UNDOCHARCOUNT] = STB_TEXTEDIT_GETCHAR(str, u.where + i);
+			s->redo_char_point -= u.delete_length;
+			if (s->redo_char_point < 0)
+				s->redo_char_point += STB_TEXTEDIT_UNDOCHARCOUNT;
+			STB_TEXTEDIT_DELETECHARS(str, u.where, u.delete_length);
+		}
+	}
+
+	if (u.insert_length)
+	{
+		STB_TEXTEDIT_INSERTCHARS(str, u.where, &s->undo_char[u.char_storage], u.insert_length);
+		s->undo_char_point -= u.insert_length;
+		if (s->undo_char_point < 0)
+			s->undo_char_point += STB_TEXTEDIT_UNDOCHARCOUNT;
+	}
+
+	state->cursor = u.where + u.insert_length;
+	s->redo_point++;
+}
+
+/* Perform a redo operation */
+static void stb_textedit_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+{
+	StbUndoState *s;
+	StbUndoRecord r;
+	StbUndoRecord *u;
+	int redo_idx;
+	int undo_idx;
+	STB_TEXTEDIT_POSITIONTYPE i;
+	int can_store;
+
+	s = &state->undostate;
+	if (s->redo_point == STB_TEXTEDIT_UNDOSTATECOUNT)
+		return;
+
+	redo_idx = (s->undo_rec_start + s->redo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+	r = s->undo_rec[redo_idx];
+	undo_idx = (s->undo_rec_start + s->undo_point) % STB_TEXTEDIT_UNDOSTATECOUNT;
+	u = &s->undo_rec[undo_idx];
+
+	/* Create undo record */
+	u->delete_length = r.insert_length;
+	u->insert_length = r.delete_length;
+	u->where = r.where;
+	u->char_storage = -1;
+
+	if (r.delete_length)
+	{
+		/* Check if there's enough space for undo characters */
+		can_store = 1;
+		if (s->undo_char_point < s->redo_char_point)
+		{
+			if (s->undo_char_point + u->insert_length > s->redo_char_point)
+				can_store = 0;
+		}
+		else
+		{
+			if (s->undo_char_point + u->insert_length > STB_TEXTEDIT_UNDOCHARCOUNT &&
+				(s->undo_char_point + u->insert_length) % STB_TEXTEDIT_UNDOCHARCOUNT > s->redo_char_point)
+				can_store = 0;
+		}
+
+		if (can_store)
+		{
+			u->char_storage = s->undo_char_point;
+			for (i = 0; i < u->insert_length; i++)
+				s->undo_char[(u->char_storage + i) % STB_TEXTEDIT_UNDOCHARCOUNT] = STB_TEXTEDIT_GETCHAR(str, u->where + i);
+			s->undo_char_point += u->insert_length;
+			if (s->undo_char_point >= STB_TEXTEDIT_UNDOCHARCOUNT)
+				s->undo_char_point -= STB_TEXTEDIT_UNDOCHARCOUNT;
+			STB_TEXTEDIT_DELETECHARS(str, r.where, r.delete_length);
+		}
+		else
+		{
+			u->insert_length = 0;
+			u->delete_length = 0;
+		}
+	}
+
+	if (r.insert_length)
+	{
+		STB_TEXTEDIT_INSERTCHARS(str, r.where, &s->undo_char[r.char_storage], r.insert_length);
+		s->redo_char_point += r.insert_length;
+		if (s->redo_char_point >= STB_TEXTEDIT_UNDOCHARCOUNT)
+			s->redo_char_point -= STB_TEXTEDIT_UNDOCHARCOUNT;
+	}
+
+	state->cursor = r.where + r.insert_length;
+	s->undo_point++;
+	s->redo_point++;
+}
+static int stb_textedit_can_undo(STB_TexteditState *state)
+{
+	return state->undostate.undo_point != 0;
+}
+
+static int stb_textedit_can_redo(STB_TexteditState *state)
+{
+	return state->undostate.redo_point != STB_TEXTEDIT_UNDOSTATECOUNT;
+}
+/* Create undo record for insertion */
+static void stb_text_makeundo_insert(STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length)
+{
+	stb_text_createundo(&state->undostate, where, 0, length);
+}
+
+/* Create undo record for deletion */
+static void stb_text_makeundo_delete(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length)
+{
+	STB_TEXTEDIT_CHARTYPE *p;
+	STB_TEXTEDIT_POSITIONTYPE i;
+
+	p = stb_text_createundo(&state->undostate, where, length, 0);
+	if (p)
+		for (i = 0; i < length; i++)
+			p[i % STB_TEXTEDIT_UNDOCHARCOUNT] = STB_TEXTEDIT_GETCHAR(str, where + i);
+}
+
+/* Create undo record for replacement */
+static void stb_text_makeundo_replace(STB_TEXTEDIT_STRING *str, STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE old_length, STB_TEXTEDIT_POSITIONTYPE new_length)
+{
+	STB_TEXTEDIT_CHARTYPE *p;
+	STB_TEXTEDIT_POSITIONTYPE i;
+
+	p = stb_text_createundo(&state->undostate, where, old_length, new_length);
+	if (p)
+		for (i = 0; i < old_length; i++)
+			p[i % STB_TEXTEDIT_UNDOCHARCOUNT] = STB_TEXTEDIT_GETCHAR(str, where + i);
+}
+
+/* Clear the undo/redo state */
+static void stb_textedit_clear_undo_state(STB_TexteditState *state)
+{
+	state->undostate.undo_point = 0;
+	state->undostate.undo_char_point = 0;
+	state->undostate.redo_point = STB_TEXTEDIT_UNDOSTATECOUNT;
+	state->undostate.redo_char_point = STB_TEXTEDIT_UNDOCHARCOUNT;
+	state->undostate.undo_rec_start = 0;
+}
+
+#else // !STB_TEXTEDIT_ALLOC_UNDO
+/////////////////////////////////////////////////////////////////////////////
+//
+//      Undo processing (old non-circular non-alloc version)
 //
 // @OPTIMIZE: the undo/redo buffer should be circular
 
@@ -1231,7 +1832,7 @@ static STB_TEXTEDIT_CHARTYPE *stb_text_createundo(StbUndoState *state, STB_TEXTE
    }
 }
 
-static void stb_text_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+static void stb_textedit_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
 {
    StbUndoState *s = &state->undostate;
    StbUndoRecord u, *r;
@@ -1299,7 +1900,7 @@ static void stb_text_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
    s->redo_point--;
 }
 
-static void stb_text_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
+static void stb_textedit_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
 {
    StbUndoState *s = &state->undostate;
    StbUndoRecord *u, r;
@@ -1350,6 +1951,16 @@ static void stb_text_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
    s->redo_point++;
 }
 
+static int stb_textedit_can_undo(STB_TexteditState *state)
+{
+	return state->undostate.undo_point != 0;
+}
+
+static int stb_textedit_can_redo(STB_TexteditState *state)
+{
+	return state->undostate.redo_point != STB_TEXTEDIT_UNDOSTATECOUNT;
+}
+
 static void stb_text_makeundo_insert(STB_TexteditState *state, STB_TEXTEDIT_POSITIONTYPE where, STB_TEXTEDIT_POSITIONTYPE length)
 {
    stb_text_createundo(&state->undostate, where, 0, length);
@@ -1375,13 +1986,25 @@ static void stb_text_makeundo_replace(STB_TEXTEDIT_STRING *str, STB_TexteditStat
    }
 }
 
-// reset the state to default
-static void stb_textedit_clear_state(STB_TexteditState *state, int is_single_line)
+static void stb_textedit_clear_undo_state(STB_TexteditState* state)
 {
    state->undostate.undo_point = 0;
    state->undostate.undo_char_point = 0;
    state->undostate.redo_point = STB_TEXTEDIT_UNDOSTATECOUNT;
    state->undostate.redo_char_point = STB_TEXTEDIT_UNDOCHARCOUNT;
+}
+
+#endif // STB_TEXTEDIT_ALLOC_UNDO
+
+/////////////////////////////////////////////////////////////////////////////
+//
+//      State initialization
+//
+
+// reset the state to default
+static void stb_textedit_clear_state(STB_TexteditState *state, int is_single_line)
+{
+   stb_textedit_clear_undo_state(state);
    state->select_end = state->select_start = 0;
    state->cursor = 0;
    state->has_preferred_x = 0;
@@ -1399,6 +2022,13 @@ static void stb_textedit_initialize_state(STB_TexteditState *state, int is_singl
    stb_textedit_clear_state(state, is_single_line);
 }
 
+static void stb_textedit_free_state(STB_TexteditState *state)
+{
+	#if defined(STB_TEXTEDIT_ALLOC_UNDO)
+		stb_textedit_flush_undorec(&state->undostate.redo_point);
+		stb_textedit_flush_undorec(&state->undostate.undo_point);
+	#endif
+}
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-qual"
