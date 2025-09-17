@@ -78,9 +78,7 @@
 //   primitive type that defines a single character (e.g. char, wchar_t, etc).
 //
 //   To save space or increase undo-ability, you can optionally define the
-//   following things that are used by the undo system if
-//   STB_TEXTEDIT_ALLOC_UNDO isn't defined. Otherwise, undo states are allocated
-//   on demand.
+//   following things that are used by the undo system.
 //
 //      STB_TEXTEDIT_UNDOSTATECOUNT       the number of undo states to allow
 //      STB_TEXTEDIT_UNDOCHARCOUNT        the number of characters to store in the undo buffer
@@ -92,6 +90,9 @@
 //        [4 + 3 * sizeof(STB_TEXTEDIT_POSITIONTYPE)] * STB_TEXTEDIT_UNDOSTATECOUNT
 //      +          sizeof(STB_TEXTEDIT_CHARTYPE)      * STB_TEXTEDIT_UNDOCHARCOUNT
 //
+//	 An alternative to this is the WIP STB_TEXTEDIT_ALLOC_UNDO define,
+//   which allocates the undo states on demand. Also there is
+//   STB_TEXTEDIT_CIRCULAR_UNDO for a WIP circular non-alloced version.
 //
 // Implementation mode:
 //
