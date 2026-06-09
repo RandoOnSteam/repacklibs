@@ -485,7 +485,7 @@ const char *mz_error(int err);
 
 #endif // MINIZ_NO_ZLIB_APIS
 
-// ------------------- Types and macros (WikiServer exclusive here as well)
+// ------------------- Types and macros (WikiCms exclusive here as well)
 
 typedef unsigned char mz_uint8;
 typedef signed short mz_int16;
