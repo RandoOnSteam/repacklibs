@@ -1,7 +1,7 @@
 # repackaged libs
 Single-file header-only libs written by other people that are public domain and modified by RandoOnSteam <randoonsteam@gmail.com>.
 
-* [miniz.h](miniz.h) - The original public domain minizip modified for ancient compilers and libc removal. Also adds a light wrapper you can use ("Zip" for C++ and "ZIP" for C).
+* [miniz.h](miniz.h) - The original public domain minizip modified for ancient compilers and libc removal and updated for ZIP64. Also adds a light wrapper you can use ("Zip" for C++ and "ZIP" for C).
 
 * [stb_textedit.h](stb_textedit.h) - The text control guts with some modifications:
 
