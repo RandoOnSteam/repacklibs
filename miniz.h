@@ -3614,6 +3614,7 @@ static mz_bool mz_zip_get_file_modified_time(const char *pFilename, mz_uint16 *p
 }
 
 #ifndef MINIZ_NO_TIME
+#include <sys/utime.h>
 static mz_bool mz_zip_set_file_times(const char *pFilename, time_t access_time, time_t modified_time)
 {
   struct utimbuf t; t.actime = access_time; t.modtime = modified_time;
@@ -4013,7 +4014,7 @@ static mz_bool mz_zip_reader_read_central_dir(mz_zip_archive *pZip, mz_uint32 fl
 	return MZ_FALSE;
   pZip->m_total_files = (mz_uint)total_files;
 
-  if (pZip->m_total_files > ((size_t)-1 / MZ_ZIP_CENTRAL_DIR_HEADER_SIZE))
+  if (pZip->m_total_files > ((mz_uint)-1 / MZ_ZIP_CENTRAL_DIR_HEADER_SIZE))
 	return MZ_FALSE;
   if (cdir_size < (size_t)pZip->m_total_files * MZ_ZIP_CENTRAL_DIR_HEADER_SIZE)
 	return MZ_FALSE;
@@ -5225,7 +5226,7 @@ mz_bool mz_zip_reader_extract_to_file(mz_zip_archive *pZip, mz_uint file_index, 
 
 mz_bool mz_zip_reader_end(mz_zip_archive *pZip)
 {
-  if ((!pZip) || (!pZip->m_pState) || (!pZip->m_pAlloc) || (!pZip->m_pFree) || (pZip->m_zip_mode != MZ_ZIP_MODE_READING))
+	if ((!pZip) || (!pZip->m_pState) || (!pZip->m_pAlloc) || (!pZip->m_pFree) || (pZip->m_zip_mode != MZ_ZIP_MODE_READING))
 	return MZ_FALSE;
 
 	if (pZip->m_pState)
